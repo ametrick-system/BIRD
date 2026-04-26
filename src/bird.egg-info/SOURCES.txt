@@ -1,0 +1,7 @@
+pyproject.toml
+src/bird/__init__.py
+src/bird.egg-info/PKG-INFO
+src/bird.egg-info/SOURCES.txt
+src/bird.egg-info/dependency_links.txt
+src/bird.egg-info/requires.txt
+src/bird.egg-info/top_level.txt

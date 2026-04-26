@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bird"
+version = "0.1.0"
+description = "Benchmarks for Interpreting and Representing DNA (BIRD)"
+authors = [
+    { name = "Amy Metrick" },
+    { name = "Elliot Lichtman" },
+    { name = "Jacob Leshnower" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "tqdm",
+    "matplotlib",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
