@@ -1,4 +1,7 @@
 # Benchmarks for Interpreting and Representing DNA (BIRD)
+> Yale CPSC 4770 Final Project
+
+> Authors: Amy Metrick, Elliot Lichtman, and Jacob Leshnower
 
 ## Environment Setup
 ```bash
