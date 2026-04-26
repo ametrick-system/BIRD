@@ -1,7 +1,10 @@
 # Benchmarks for Interpreting and Representing DNA (BIRD)
-> Yale CPSC 4770 Final Project
 
-> Authors: Amy Metrick, Elliot Lichtman, and Jacob Leshnower
+**Summary:** A framework for comparing the performance of different transformer architectures (GPT, BERT, BART) on DNA sequence modeling tasks
+
+**Authors:** Amy Metrick, Elliot Lichtman, and Jacob Leshnower
+
+Yale CPSC 4770 final project
 
 ## Environment Setup
 ```bash

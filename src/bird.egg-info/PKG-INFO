@@ -1,9 +1,0 @@
-Metadata-Version: 2.4
-Name: bird
-Version: 0.1.0
-Summary: Benchmarks for Interpreting and Representing DNA (BIRD)
-Author: Amy Metrick, Elliot Lichtman, Jacob Leshnower
-Requires-Python: >=3.10
-Requires-Dist: numpy
-Requires-Dist: tqdm
-Requires-Dist: matplotlib
