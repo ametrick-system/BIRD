@@ -1,3 +1,4 @@
 *.egg-info
 *.pyc
 __pycache__/
+src/bird/data/dna_1000000_seq.jsonl

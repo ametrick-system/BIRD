@@ -24,6 +24,15 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 
 # [IN PROJECT DIRECTORY] install the project as an editable package and install project dependencies
 pip install -e .
+
+# Make all scripts executable
+find . -name "*.sh" -exec chmod +x {} +
+```
+
+## Generating Data
+If you would like to generate more datasets of varying sizes, navigate to the data directory and run:
+```bash
+./generate_data.sh 10000 100000 1000000
 ```
 
 ## AI Acknowledgements
