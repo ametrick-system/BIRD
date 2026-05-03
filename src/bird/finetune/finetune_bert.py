@@ -26,6 +26,7 @@ from bird.finetune.finetune_utils import (
     ClassificationCollator,
     TokenClassificationCollator,
     binary_classification_metrics,
+    binary_auroc_from_logits,
 )
 
 from bird.tasks.motif_recognition import MotifRecognition
@@ -296,6 +297,8 @@ def evaluate(
     total_majority = 0.0
     total_pos_rate = 0.0
     total_classification_batches = 0
+    all_binary_logits = []
+    all_binary_labels = []
 
     # For token classification
     total_token_metrics = {
@@ -308,6 +311,7 @@ def evaluate(
         "exon_accuracy": 0.0,
     }
     total_token_batches = 0
+
 
     progress_bar = tqdm(
         dataloader,
@@ -347,6 +351,9 @@ def evaluate(
             total_majority += batch_metrics["majority_baseline_accuracy"]
             total_pos_rate += batch_metrics["positive_rate"]
             total_classification_batches += 1
+            
+            all_binary_logits.append(outputs["logits"].detach().cpu())
+            all_binary_labels.append(labels.detach().cpu())
 
             progress_bar.set_postfix(
                 loss=f"{avg_loss:.4f}",
@@ -380,6 +387,9 @@ def evaluate(
         metrics["f1"] = total_f1 / total_classification_batches
         metrics["majority_baseline_accuracy"] = total_majority / total_classification_batches
         metrics["positive_rate"] = total_pos_rate / total_classification_batches
+        binary_logits = torch.cat(all_binary_logits, dim=0)
+        binary_labels = torch.cat(all_binary_labels, dim=0)
+        metrics["auroc"] = binary_auroc_from_logits(binary_logits, binary_labels)
 
     elif task_type == "token_classification" and total_token_batches > 0:
         for k in total_token_metrics:
@@ -485,6 +495,21 @@ def main() -> None:
 
     best_val_loss = float("inf")
 
+    print("Evaluating pretrained baseline (epoch 0)...")
+
+    baseline_metrics = evaluate(
+        model=model,
+        dataloader=val_loader,
+        device=device,
+        epoch=0,
+        task_type=task_type,
+    )
+
+    print(
+        "Epoch 0 (baseline) | "
+        + " | ".join(f"{k}={v:.4f}" for k, v in baseline_metrics.items())
+    )
+
     for epoch in range(1, args.epochs + 1):
         train_metrics = train_one_epoch(
             model=model,
@@ -510,6 +535,7 @@ def main() -> None:
                 f"val_loss={val_metrics['loss']:.4f} | "
                 f"val_acc={val_metrics['accuracy']:.4f} | "
                 f"f1={val_metrics['f1']:.4f} | "
+                f"auroc={val_metrics.get('auroc', float('nan')):.4f} | "
                 f"prec={val_metrics['precision']:.4f} | "
                 f"rec={val_metrics['recall']:.4f} | "
                 f"maj_acc={val_metrics['majority_baseline_accuracy']:.4f} | "
