@@ -37,9 +37,9 @@ find . -name "*.sh" -exec chmod +x {} +
 ```
 
 ## Generating Data
-If you would like to generate more datasets of varying sizes, navigate to the data directory and run:
+If you would like to generate more datasets of varying sizes, navigate to the data directory and run `./generate_data.sh` with any number of arguments denoting the size of the datasets you would like. For example, to get separate datasets of size 100, 1000, and 10000, you would run:  
 ```bash
-./generate_data.sh 10000 100000 1000000
+./generate_data.sh 100 1000 10000
 ```
 
 ## AI Use Acknowledgement
