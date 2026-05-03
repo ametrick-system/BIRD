@@ -22,6 +22,8 @@ from bird.finetune.finetune_utils import (
     TaskSFTDataset,
     ClassificationCollator,
     generative_token_metrics,
+    binary_classification_metrics,
+    binary_auroc_from_logits,
 )
 
 from bird.tasks.motif_recognition import MotifRecognition
@@ -246,16 +248,19 @@ def evaluate_bart(
     total_loss = 0.0
     total_batches = 0
 
+    # Binary classification
     total_accuracy = 0.0
+    total_precision = 0.0
+    total_recall = 0.0
+    total_f1 = 0.0
+    total_majority = 0.0
+    total_pos_rate = 0.0
     total_metric_batches = 0
+    all_binary_logits = []
+    all_binary_labels = []
 
+    # Generative
     total_gen_token_accuracy = 0.0
-    total_gen_majority_baseline_accuracy = 0.0
-    total_gen_exon_precision = 0.0
-    total_gen_exon_recall = 0.0
-    total_gen_exon_f1 = 0.0
-    total_gen_non_exon_accuracy = 0.0
-    total_gen_exon_accuracy = 0.0
     total_gen_exact_match_rate = 0.0
     total_gen_metric_batches = 0
 
@@ -274,15 +279,23 @@ def evaluate_bart(
                 labels=labels,
             )
 
-            probs = torch.sigmoid(outputs["logits"].view(-1))
-            preds = (probs >= 0.5).float()
-            acc = (preds == labels.view(-1).float()).float().mean().item()
-            total_accuracy += acc
+            batch_metrics = binary_classification_metrics(outputs["logits"], labels)
+
+            total_accuracy += batch_metrics["accuracy"]
+            total_precision += batch_metrics["precision"]
+            total_recall += batch_metrics["recall"]
+            total_f1 += batch_metrics["f1"]
+            total_majority += batch_metrics["majority_baseline_accuracy"]
+            total_pos_rate += batch_metrics["positive_rate"]
             total_metric_batches += 1
+
+            all_binary_logits.append(outputs["logits"].detach().cpu())
+            all_binary_labels.append(labels.detach().cpu())
 
             progress_bar.set_postfix(
                 loss=f"{(total_loss + outputs['loss'].item()) / (total_batches + 1):.4f}",
-                acc=f"{acc:.4f}",
+                acc=f"{batch_metrics['accuracy']:.4f}",
+                f1=f"{batch_metrics['f1']:.4f}",
             )
 
         elif task_type == "generative":
@@ -300,15 +313,13 @@ def evaluate_bart(
                 labels=labels,
             )
 
-            batch_metrics = generative_token_metrics(outputs["logits"], labels)
+            batch_metrics = generative_token_metrics(
+                outputs["logits"],
+                labels,
+                ignore_label=-100,
+            )
 
             total_gen_token_accuracy += batch_metrics["token_accuracy"]
-            total_gen_majority_baseline_accuracy += batch_metrics["majority_baseline_accuracy"]
-            total_gen_exon_precision += batch_metrics["exon_precision"]
-            total_gen_exon_recall += batch_metrics["exon_recall"]
-            total_gen_exon_f1 += batch_metrics["exon_f1"]
-            total_gen_non_exon_accuracy += batch_metrics["non_exon_accuracy"]
-            total_gen_exon_accuracy += batch_metrics["exon_accuracy"]
             total_gen_exact_match_rate += batch_metrics["exact_match_rate"]
             total_gen_metric_batches += 1
 
@@ -316,10 +327,6 @@ def evaluate_bart(
                 loss=f"{(total_loss + outputs['loss'].item()) / (total_batches + 1):.4f}",
                 tok_acc=f"{batch_metrics['token_accuracy']:.4f}",
                 exact=f"{batch_metrics['exact_match_rate']:.4f}",
-            )
-
-            progress_bar.set_postfix(
-                loss=f"{(total_loss + outputs['loss'].item()) / (total_batches + 1):.4f}",
             )
 
         else:
@@ -334,22 +341,19 @@ def evaluate_bart(
 
     if task_type == "binary_classification" and total_metric_batches > 0:
         metrics["accuracy"] = total_accuracy / total_metric_batches
-    
-    if task_type == "generative" and total_gen_metric_batches > 0:
+        metrics["precision"] = total_precision / total_metric_batches
+        metrics["recall"] = total_recall / total_metric_batches
+        metrics["f1"] = total_f1 / total_metric_batches
+        metrics["majority_baseline_accuracy"] = total_majority / total_metric_batches
+        metrics["positive_rate"] = total_pos_rate / total_metric_batches
+
+        binary_logits = torch.cat(all_binary_logits, dim=0)
+        binary_labels = torch.cat(all_binary_labels, dim=0)
+        metrics["auroc"] = binary_auroc_from_logits(binary_logits, binary_labels)
+
+    elif task_type == "generative" and total_gen_metric_batches > 0:
         metrics["token_accuracy"] = total_gen_token_accuracy / total_gen_metric_batches
-        metrics["majority_baseline_accuracy"] = (
-            total_gen_majority_baseline_accuracy / total_gen_metric_batches
-        )
-        metrics["exon_precision"] = total_gen_exon_precision / total_gen_metric_batches
-        metrics["exon_recall"] = total_gen_exon_recall / total_gen_metric_batches
-        metrics["exon_f1"] = total_gen_exon_f1 / total_gen_metric_batches
-        metrics["non_exon_accuracy"] = (
-            total_gen_non_exon_accuracy / total_gen_metric_batches
-        )
-        metrics["exon_accuracy"] = total_gen_exon_accuracy / total_gen_metric_batches
-        metrics["exact_match_rate"] = (
-            total_gen_exact_match_rate / total_gen_metric_batches
-        )
+        metrics["exact_match_rate"] = total_gen_exact_match_rate / total_gen_metric_batches
 
     return metrics
 
@@ -445,6 +449,21 @@ def main():
 
     best_val_loss = float("inf")
 
+    print("Evaluating pretrained baseline (epoch 0)...")
+
+    baseline_metrics = evaluate_bart(
+        model=model,
+        dataloader=val_loader,
+        device=device,
+        epoch=0,
+        task_type=task_type,
+    )
+
+    print(
+        "Epoch 0 (baseline) | "
+        + " | ".join(f"{k}={v:.4f}" for k, v in baseline_metrics.items())
+    )
+
     for epoch in range(1, args.epochs + 1):
         train_metrics = train_bart_epoch(
             model=model,
@@ -468,7 +487,9 @@ def main():
                 f"Epoch {epoch:02d}/{args.epochs:02d} | "
                 f"train_loss={train_metrics['loss']:.4f} | "
                 f"val_loss={val_metrics['loss']:.4f} | "
-                f"val_acc={val_metrics['accuracy']:.4f}"
+                f"val_acc={val_metrics['accuracy']:.4f} | "
+                f"val_f1={val_metrics.get('f1', float('nan')):.4f} | "
+                f"val_auroc={val_metrics.get('auroc', float('nan')):.4f}"
             )
         else:
             print(

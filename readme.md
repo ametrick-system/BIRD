@@ -9,9 +9,10 @@ Yale CPSC 4770 final project
 ## Environment Setup
 ```bash
 # Clone github into home directory
-git clone git@github.com:ametrick-system/BIRD.git
+cd ~/
+git clone https://github.com/ametrick-system/BIRD.git
 
-# [IN HOME DIRECTORY] create and activate virtual environment
+# Create and activate virtual environment
 module load miniconda
 conda create -n bird python=3.10
 conda activate bird
@@ -22,7 +23,13 @@ nvidia-smi
 # Install Pytorch for YOUR CUDA version (below example is done for CUDA 12.4)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
-# [IN PROJECT DIRECTORY] install the project as an editable package and install project dependencies
+# Install other necessary software
+pip install numpy
+pip install tqdm
+pip install matplotlib
+
+# [IN PROJECT DIRECTORY] install the project as an editable package
+cd BIRD
 pip install -e .
 
 # Make all scripts executable
@@ -35,8 +42,4 @@ If you would like to generate more datasets of varying sizes, navigate to the da
 ./generate_data.sh 10000 100000 1000000
 ```
 
-## AI Acknowledgements
-- The `models` directory was written with the aid of ChatGPT-5.3
-
-## WORK IN PROGRESS NOTES (delete later)
-- Support more activation functions (right now just relu, gelu)
+## AI Use Acknowledgement
