@@ -168,7 +168,7 @@ class GPTModel(nn.Module):
             loss = F.cross_entropy(
                 shift_logits.view(-1, self.config.vocab_size),
                 shift_labels.view(-1),
-                ignore_index=self.config.padding_idx,
+                ignore_index=-100, # for generative tasks (i.e. splicing)
             )
 
         return {

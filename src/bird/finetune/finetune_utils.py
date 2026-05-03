@@ -174,7 +174,7 @@ class SFTCollator:
             asst_tokens = self.tokenizer.encode(asst_text)
 
             input_ids = user_tokens + [self.sep_token_id] + asst_tokens + [self.sep_token_id]
-            labels = [0] * len(user_tokens) + [0] + asst_tokens + [self.sep_token_id]
+            labels = [-100] * len(user_tokens) + [-100] + asst_tokens + [self.sep_token_id]
 
             if len(input_ids) > self.max_length:
                 input_ids = input_ids[:self.max_length]
@@ -191,7 +191,7 @@ class SFTCollator:
         labels_padded = pad_sequence(
             batch_labels,
             batch_first=True,
-            padding_value=0,
+            padding_value=-100,
         )
         attention_mask = (input_ids_padded != self.pad_token_id).long()
 
@@ -440,38 +440,41 @@ def token_classification_metrics(
 def generative_token_metrics(
     logits: torch.Tensor,
     labels: torch.Tensor,
-    ignore_label: int = 0,
+    ignore_label: int = -100,
 ) -> dict[str, float]:
     """
-    Compute token-level metrics for GPT generative tasks.
+    Compute metrics for generative/SFT tasks.
 
     Assumes:
       - logits shape: (B, T, V)
       - labels shape: (B, T)
-      - GPT loss is next-token prediction, so we compare:
-            logits[:, :-1, :]  vs labels[:, 1:]
-      - labels == ignore_label are ignored (user prompt / padded positions)
+      - next-token prediction:
+            logits[:, :-1, :] compared against labels[:, 1:]
+      - labels == ignore_label are ignored
 
-    Returns metrics over the supervised assistant portion only.
+    Returns:
+      - token_accuracy: accuracy over supervised target tokens only
+      - exact_match_rate: fraction of examples where all supervised target tokens are correct
     """
     if logits.ndim != 3:
         raise ValueError(f"logits must have shape (B, T, V), got {tuple(logits.shape)}")
     if labels.ndim != 2:
         raise ValueError(f"labels must have shape (B, T), got {tuple(labels.shape)}")
 
+    if logits.shape[:2] != labels.shape:
+        raise ValueError(
+            f"logits first two dims must match labels shape. "
+            f"Got logits {tuple(logits.shape)} and labels {tuple(labels.shape)}."
+        )
+
     shift_logits = logits[:, :-1, :]
     shift_labels = labels[:, 1:]
 
     active_mask = shift_labels != ignore_label
+
     if not active_mask.any():
         return {
             "token_accuracy": 0.0,
-            "majority_baseline_accuracy": 0.0,
-            "exon_precision": 0.0,
-            "exon_recall": 0.0,
-            "exon_f1": 0.0,
-            "non_exon_accuracy": 0.0,
-            "exon_accuracy": 0.0,
             "exact_match_rate": 0.0,
         }
 
@@ -482,33 +485,8 @@ def generative_token_metrics(
 
     token_accuracy = (active_preds == active_gold).float().mean().item()
 
-    # Majority baseline over supervised tokens
-    unique_vals, counts = torch.unique(active_gold, return_counts=True)
-    majority_baseline_accuracy = counts.max().item() / counts.sum().item()
-
-    # For exon/non-exon metrics, assume labels are binary token ids 0/1
-    # after task formatting. If that is not true for your splicing target
-    # representation, these metrics will not be meaningful.
-    tp = ((active_preds == 1) & (active_gold == 1)).sum().item()
-    fp = ((active_preds == 1) & (active_gold == 0)).sum().item()
-    fn = ((active_preds == 0) & (active_gold == 1)).sum().item()
-    tn = ((active_preds == 0) & (active_gold == 0)).sum().item()
-
-    exon_precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    exon_recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    exon_f1 = (
-        2 * exon_precision * exon_recall / (exon_precision + exon_recall)
-        if (exon_precision + exon_recall) > 0
-        else 0.0
-    )
-
-    non_exon_accuracy = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-    exon_accuracy = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-
-    # Exact match at sequence level over supervised assistant tokens
     exact_matches = []
-    batch_size = shift_labels.size(0)
-    for b in range(batch_size):
+    for b in range(shift_labels.size(0)):
         row_mask = active_mask[b]
         if row_mask.any():
             row_pred = preds[b][row_mask]
@@ -519,14 +497,39 @@ def generative_token_metrics(
 
     return {
         "token_accuracy": float(token_accuracy),
-        "majority_baseline_accuracy": float(majority_baseline_accuracy),
-        "exon_precision": float(exon_precision),
-        "exon_recall": float(exon_recall),
-        "exon_f1": float(exon_f1),
-        "non_exon_accuracy": float(non_exon_accuracy),
-        "exon_accuracy": float(exon_accuracy),
         "exact_match_rate": float(exact_match_rate),
     }
+
+@torch.no_grad()
+def binary_auroc_from_logits(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+) -> float:
+    """
+    Compute AUROC for binary classification from logits.
+
+    Uses rank-based AUROC:
+        AUROC = P(score_positive > score_negative)
+
+    Returns nan if only one class is present.
+    """
+    scores = torch.sigmoid(logits.view(-1)).detach().cpu()
+    gold = labels.view(-1).long().detach().cpu()
+
+    pos_scores = scores[gold == 1]
+    neg_scores = scores[gold == 0]
+
+    if len(pos_scores) == 0 or len(neg_scores) == 0:
+        return float("nan")
+
+    # Pairwise AUROC; fine for validation sets of moderate size.
+    comparisons = pos_scores[:, None] - neg_scores[None, :]
+    auroc = (
+        (comparisons > 0).float().mean()
+        + 0.5 * (comparisons == 0).float().mean()
+    )
+
+    return float(auroc.item())
 
 # ==========================================
 # 5. TRAIN / EVAL LOOPS
@@ -603,6 +606,8 @@ def evaluate_sft(
     total_majority = 0.0
     total_pos_rate = 0.0
     total_classification_batches = 0
+    all_binary_logits = []
+    all_binary_labels = []
 
     # For token-classification metrics
     total_token_accuracy = 0.0
@@ -616,12 +621,6 @@ def evaluate_sft(
 
     # For generative metrics
     total_gen_token_accuracy = 0.0
-    total_gen_majority_baseline_accuracy = 0.0
-    total_gen_exon_precision = 0.0
-    total_gen_exon_recall = 0.0
-    total_gen_exon_f1 = 0.0
-    total_gen_non_exon_accuracy = 0.0
-    total_gen_exon_accuracy = 0.0
     total_gen_exact_match_rate = 0.0
     total_gen_metric_batches = 0
 
@@ -666,6 +665,9 @@ def evaluate_sft(
             total_pos_rate += batch_metrics["positive_rate"]
             total_classification_batches += 1
 
+            all_binary_logits.append(outputs["logits"].detach().cpu())
+            all_binary_labels.append(labels.detach().cpu())
+
             progress_bar.set_postfix(
                 loss=f"{avg_loss:.4f}",
                 acc=f"{batch_metrics['accuracy']:.4f}",
@@ -691,22 +693,15 @@ def evaluate_sft(
             )
 
         elif task_type == "generative":
-            batch_metrics = generative_token_metrics(outputs["logits"], labels)
+            batch_metrics = generative_token_metrics(outputs["logits"], labels, ignore_label=-100)
 
             total_gen_token_accuracy += batch_metrics["token_accuracy"]
-            total_gen_majority_baseline_accuracy += batch_metrics["majority_baseline_accuracy"]
-            total_gen_exon_precision += batch_metrics["exon_precision"]
-            total_gen_exon_recall += batch_metrics["exon_recall"]
-            total_gen_exon_f1 += batch_metrics["exon_f1"]
-            total_gen_non_exon_accuracy += batch_metrics["non_exon_accuracy"]
-            total_gen_exon_accuracy += batch_metrics["exon_accuracy"]
             total_gen_exact_match_rate += batch_metrics["exact_match_rate"]
             total_gen_metric_batches += 1
 
             progress_bar.set_postfix(
                 loss=f"{avg_loss:.4f}",
                 tok_acc=f"{batch_metrics['token_accuracy']:.4f}",
-                exon_f1=f"{batch_metrics['exon_f1']:.4f}",
                 exact=f"{batch_metrics['exact_match_rate']:.4f}",
             )
 
@@ -722,6 +717,9 @@ def evaluate_sft(
         metrics["f1"] = total_f1 / total_classification_batches
         metrics["majority_baseline_accuracy"] = total_majority / total_classification_batches
         metrics["positive_rate"] = total_pos_rate / total_classification_batches
+        binary_logits = torch.cat(all_binary_logits, dim=0)
+        binary_labels = torch.cat(all_binary_labels, dim=0)
+        metrics["auroc"] = binary_auroc_from_logits(binary_logits, binary_labels)
 
     elif task_type == "token_classification" and total_token_metric_batches > 0:
         metrics["token_accuracy"] = total_token_accuracy / total_token_metric_batches
@@ -738,16 +736,6 @@ def evaluate_sft(
 
     elif task_type == "generative" and total_gen_metric_batches > 0:
         metrics["token_accuracy"] = total_gen_token_accuracy / total_gen_metric_batches
-        metrics["majority_baseline_accuracy"] = (
-            total_gen_majority_baseline_accuracy / total_gen_metric_batches
-        )
-        metrics["exon_precision"] = total_gen_exon_precision / total_gen_metric_batches
-        metrics["exon_recall"] = total_gen_exon_recall / total_gen_metric_batches
-        metrics["exon_f1"] = total_gen_exon_f1 / total_gen_metric_batches
-        metrics["non_exon_accuracy"] = (
-            total_gen_non_exon_accuracy / total_gen_metric_batches
-        )
-        metrics["exon_accuracy"] = total_gen_exon_accuracy / total_gen_metric_batches
         metrics["exact_match_rate"] = (
             total_gen_exact_match_rate / total_gen_metric_batches
         )

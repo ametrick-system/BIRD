@@ -145,6 +145,21 @@ def main():
     # ----------------------------------------
     best_val_loss = float("inf")
 
+    print("Evaluating pretrained baseline (epoch 0)...")
+
+    baseline_metrics = evaluate_sft(
+        model=model,
+        dataloader=val_loader,
+        device=device,
+        epoch=0,
+        task_type=task_type,
+    )
+
+    print(
+        "Epoch 0 (baseline) | "
+        + " | ".join(f"{k}={v:.4f}" for k, v in baseline_metrics.items())
+    )
+
     for epoch in range(1, args.epochs + 1):
         train_metrics = train_sft_epoch(
             model=model,
@@ -168,7 +183,9 @@ def main():
                 f"Epoch {epoch:02d}/{args.epochs:02d} | "
                 f"train_loss={train_metrics['loss']:.4f} | "
                 f"val_loss={val_metrics['loss']:.4f} | "
-                f"val_acc={val_metrics['accuracy']:.4f}"
+                f"val_acc={val_metrics['accuracy']:.4f} | "
+                f"val_f1={val_metrics.get('f1', float('nan')):.4f} | "
+                f"val_auroc={val_metrics.get('auroc', float('nan')):.4f}"
             )
         elif task_type == "generative":
             print(
@@ -176,12 +193,6 @@ def main():
                 f"train_loss={train_metrics['loss']:.4f} | "
                 f"val_loss={val_metrics['loss']:.4f} | "
                 f"val_token_acc={val_metrics.get('token_accuracy', float('nan')):.4f} | "
-                f"majority_acc={val_metrics.get('majority_baseline_accuracy', float('nan')):.4f} | "
-                f"exon_prec={val_metrics.get('exon_precision', float('nan')):.4f} | "
-                f"exon_rec={val_metrics.get('exon_recall', float('nan')):.4f} | "
-                f"exon_f1={val_metrics.get('exon_f1', float('nan')):.4f} | "
-                f"non_exon_acc={val_metrics.get('non_exon_accuracy', float('nan')):.4f} | "
-                f"exon_acc={val_metrics.get('exon_accuracy', float('nan')):.4f} | "
                 f"exact_match={val_metrics.get('exact_match_rate', float('nan')):.4f}"
             )
 

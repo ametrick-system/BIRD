@@ -1,0 +1,21 @@
+{
+  "tokenizer_type": "kmer",
+  "k": 3,
+  "overlapping": true,
+  "base_alphabet": [
+    "A",
+    "C",
+    "G",
+    "T",
+    "N"
+  ],
+  "special_tokens": [
+    "[PAD]",
+    "[UNK]",
+    "[CLS]",
+    "[SEP]",
+    "[MASK]",
+    "[BOS]",
+    "[EOS]"
+  ]
+}

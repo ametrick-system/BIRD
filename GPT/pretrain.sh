@@ -9,12 +9,12 @@ cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT/src"
 
 export DATA_DIR="$PROJECT_ROOT/src/bird/data"
-export RUN_SAVE_PATH="$PROJECT_ROOT/GPT/"
+export RUN_SAVE_PATH="$PROJECT_ROOT/GPT"
 export NUM_SEQ=100000
 
 mkdir -p "$RUN_SAVE_PATH"
 
-LOGFILE="$RUN_SAVE_PATH/pretrain.log"
+LOGFILE="$RUN_SAVE_PATH/logs/pretrain.log"
 : > "$LOGFILE"
 exec &> >(tee -a "$LOGFILE")
 
