@@ -17,40 +17,46 @@ class GenomicDataGenerator:
     def generate_enhancer(self):
         """
         Generate a random enhancer of length 15-25.
-
         Functional rule:
-        - insert a random 4-bp motif
-        - insert its matched anti-motif
-        - both must be present
-        - anti-motif must occur sufficiently far after the motif
+        - Contains AANN followed by its complementary TTN'N'
         """
         length = random.randint(15, 25)
         base_seq = list(self.get_random_seq(length))
 
-        pos1 = random.randint(0, length - 14)
-        pos2 = random.randint(pos1 + 4, length - 4)
+        # Prepare the motifs
+        n_indices = [random.randint(0, 3) for _ in range(2)]
+        first4 = "AA" + "".join(self.bases[i] for i in n_indices)
+        second4 = "TT" + "".join(self.antibases[i] for i in n_indices)
 
-        first4 = "AA"
-        second4 = "TT"
-
-        for _ in range(2):
-            chosen = random.randint(0, 3)
-            first4 += self.bases[chosen]
-            second4 += self.antibases[chosen]
-
-        functional = True
+        # Attempt random insertion
+        # Ensure there is enough room (8bp for motifs + gap)
+        pos1 = random.randint(0, length - 9) 
+        pos2 = random.randint(pos1 + 5, length - 4)
 
         if random.random() < 0.7:
             base_seq[pos1:pos1+4] = list(first4)
-        else:
-            functional = False
-
+        
         if random.random() < 0.7:
             base_seq[pos2:pos2+4] = list(second4)
-        else:
-            functional = False
 
-        return "".join(base_seq), functional
+        # Final Validation Scanner
+        # This checks if the rule is met, whether by insertion or random chance
+        full_seq = "".join(base_seq)
+        is_functional = False
+        
+        for i in range(len(full_seq) - 7):
+            if full_seq[i:i+2] == "AA":
+                n1, n2 = full_seq[i+2], full_seq[i+3]
+                
+                comp_n1 = self.antibases[self.bases.index(n1)]
+                comp_n2 = self.antibases[self.bases.index(n2)]
+                target = "TT" + comp_n1 + comp_n2
+                
+                if target in full_seq[i+4:]:
+                    is_functional = True
+                    break
+
+        return full_seq, is_functional
 
     def generate_orf(self):
         """Rule: HMM-based Exon/Intron switching."""
@@ -77,7 +83,7 @@ class GenomicDataGenerator:
                 regions.append(current)
                 current = ""
             
-            # 2. Emit nucleotide based on state
+            # Emit nucleotide based on state
             dist = self.exon_dist if exon else self.intron_dist
             char = random.choices(self.bases, weights=dist)[0]
             
@@ -88,7 +94,7 @@ class GenomicDataGenerator:
         labels.append(exon)
 
         
-        # 3. Final Rule: Insert stop codon at end of last exon
+        # Final Rule: Insert stop codon at end of last exon
         # Remove it from all previous exon
         for i in range(len(regions)):
             if labels[i] == True:
