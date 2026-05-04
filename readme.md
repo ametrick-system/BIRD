@@ -41,5 +41,3 @@ If you would like to generate more datasets of varying sizes, navigate to the da
 ```bash
 ./generate_data.sh 100 1000 10000
 ```
-
-## AI Use Acknowledgement
